@@ -23,4 +23,5 @@ Add to a project's `.claude/settings.local.json`:
 
 - `gate.py` runs on every prompt. The first prompt starts the timer (`LIMIT_SECONDS`, 60 for demos). Past the limit, it blocks the prompt and opens the camera.
 - `counter.py` counts reps with MediaPipe Pose: both wrists from below the shoulders to above the head. At 10, it resets the timer.
+- Send `pineapple` by itself to turn the gate off, and `apple` to turn it back on with a fresh timer. Claude never sees either word.
 - Create a file named `disabled` in this folder to pause the gate. Press `q` in the camera window to quit without unlocking.

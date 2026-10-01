@@ -2,7 +2,8 @@
 10 jumping jacks are done on camera.
 
 Exit 0 lets the prompt through. Exit 2 blocks it and shows stderr to the user.
-Create ~/jumpjack-gate/disabled to turn the gate off.
+Create ~/jumpjack-gate/disabled to turn the gate off, or send the safe words:
+"pineapple" turns it off, "apple" turns it back on.
 """
 import json
 import os
@@ -56,7 +57,30 @@ def launch_counter():
     )
 
 
+def handle_safe_word(prompt):
+    """Turns the gate off or on. Blocks the prompt so Claude never sees it."""
+    word = prompt.strip().lower()
+    if word == "pineapple":
+        open(DISABLED, "w").close()
+        message = "Jumping jack gate off. Send \"apple\" to turn it back on."
+    elif word == "apple":
+        if os.path.exists(DISABLED):
+            os.remove(DISABLED)
+        write_state(time.time())
+        message = f"Jumping jack gate on. Timer started: {LIMIT_SECONDS} seconds."
+    else:
+        return False
+    print(json.dumps({"decision": "block", "reason": message}))
+    return True
+
+
 def main():
+    try:
+        prompt = json.load(sys.stdin).get("prompt", "")
+    except ValueError:
+        prompt = ""
+    if handle_safe_word(prompt):
+        return 0
     if os.path.exists(DISABLED):
         return 0
     now = time.time()
