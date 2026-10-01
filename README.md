@@ -1,6 +1,8 @@
-# Jumping jack gate
+# Desk Shrimp
 
-A Claude Code hook that blocks your prompts after a time limit until you do 10 jumping jacks on camera.
+![A shrimp hunched over a laptop](desk-shrimp.png)
+
+Too long at the desk turns you into a shrimp. Desk Shrimp is a Claude Code hook that blocks your prompts after a time limit until you do 10 jumping jacks on camera.
 
 ## Setup
 
@@ -14,7 +16,7 @@ Add to a project's `.claude/settings.local.json`:
 ```json
 "hooks": {
   "UserPromptSubmit": [
-    { "hooks": [{ "type": "command", "command": "/usr/bin/python3 /Users/sebastianchavez/jumpjack-gate/gate.py" }] }
+    { "hooks": [{ "type": "command", "command": "/usr/bin/python3 /path/to/desk-shrimp/gate.py" }] }
   ]
 }
 ```
