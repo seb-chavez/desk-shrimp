@@ -39,7 +39,7 @@ def write_state(ts):
 
 def announce():
     # JSON stdout with systemMessage is shown to the user in Claude Code.
-    print(json.dumps({"systemMessage": f"Jumping jack timer started: {LIMIT_SECONDS} seconds."}))
+    print(json.dumps({"systemMessage": f"Desk Shrimp timer started: {LIMIT_SECONDS} seconds."}))
 
 
 def counter_running():
@@ -65,12 +65,12 @@ def handle_safe_word(prompt):
     word = prompt.strip().lower()
     if word == "pineapple":
         open(DISABLED, "w").close()
-        message = "Jumping jack gate off. Send \"apple\" to turn it back on."
+        message = "Desk Shrimp off. Send \"apple\" to turn it back on."
     elif word == "apple":
         if os.path.exists(DISABLED):
             os.remove(DISABLED)
         write_state(time.time())
-        message = f"Jumping jack gate on. Timer started: {LIMIT_SECONDS} seconds."
+        message = f"Desk Shrimp on. Timer started: {LIMIT_SECONDS} seconds."
     else:
         return False
     block(message)
