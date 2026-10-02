@@ -97,8 +97,8 @@ def main():
     if not counter_running():
         launch_counter()
     print(
-        "Time's up. Do 10 jumping jacks in the camera window to keep going, "
-        "then resend your message.",
+        "Time's up. Your coach is picking an exercise in the camera window. "
+        "Finish it, then resend your message.",
         file=sys.stderr,
     )
     return 2

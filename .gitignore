@@ -4,3 +4,4 @@ state.json
 counter.pid
 counter.log
 disabled
+breaks.jsonl
