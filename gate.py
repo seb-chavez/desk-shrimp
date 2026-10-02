@@ -1,7 +1,8 @@
 """Claude Code UserPromptSubmit hook: block prompts after LIMIT_SECONDS until
-10 jumping jacks are done on camera.
+the exercise the coach picks is done on camera.
 
-Exit 0 lets the prompt through. Exit 2 blocks it and shows stderr to the user.
+Once time is up, the coach reads the blocked message: a good plea can buy extra
+seconds at the cost of extra reps. Everything else opens the camera.
 Create ~/jumpjack-gate/disabled to turn the gate off, or send the safe words:
 "pineapple" turns it off, "apple" turns it back on.
 """
@@ -10,6 +11,8 @@ import os
 import subprocess
 import sys
 import time
+
+import coach
 
 LIMIT_SECONDS = 60
 HOME = os.path.dirname(os.path.abspath(__file__))
@@ -70,8 +73,13 @@ def handle_safe_word(prompt):
         message = f"Jumping jack gate on. Timer started: {LIMIT_SECONDS} seconds."
     else:
         return False
-    print(json.dumps({"decision": "block", "reason": message}))
+    block(message)
     return True
+
+
+def block(reason):
+    # Stops the prompt before Claude sees it and shows reason to the user.
+    print(json.dumps({"decision": "block", "reason": reason}))
 
 
 def main():
@@ -94,14 +102,20 @@ def main():
             write_state(start)
             announce()
         return 0
-    if not counter_running():
-        launch_counter()
-    print(
-        "Time's up. Your coach is picking an exercise in the camera window. "
-        "Finish it, then resend your message.",
-        file=sys.stderr,
-    )
-    return 2
+    if counter_running():
+        block("Finish your reps in the camera window, then resend your message.")
+        return 0
+    verdict = coach.negotiate(prompt)
+    if verdict["grant"]:
+        # Move the window start so exactly verdict["seconds"] remain.
+        write_state(now - LIMIT_SECONDS + verdict["seconds"])
+        block(f"{verdict['reply']} You get {verdict['seconds']} seconds; "
+              f"+{verdict['extra_reps']} reps at your next break. Resend your message.")
+        return 0
+    launch_counter()
+    block(f"{verdict['reply']} Your coach is picking an exercise in the camera window. "
+          "Finish it, then resend your message.")
+    return 0
 
 
 if __name__ == "__main__":

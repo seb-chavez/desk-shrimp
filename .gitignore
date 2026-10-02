@@ -5,3 +5,4 @@ counter.pid
 counter.log
 disabled
 breaks.jsonl
+deals.json

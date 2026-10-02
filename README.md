@@ -25,6 +25,7 @@ Add to a project's `.claude/settings.local.json`:
 
 - `gate.py` runs on every prompt. The first prompt starts the timer (`LIMIT_SECONDS`, 60 for demos). Past the limit, it blocks the prompt and opens the camera.
 - `coach.py` asks Claude (Haiku, through the `claude` CLI) to pick the exercise and reps: jumping jacks, squats, or high knees. It looks at today's breaks in `breaks.jsonl`, avoids repeats, and adds reps after a skip.
+- Once time is up, the coach reads your blocked message. Plead for time ("live demo, 30 more seconds") and Claude may grant up to 60 seconds, at the cost of extra reps next break. Two extensions max per break; normal messages just get blocked.
 - `counter.py` opens the camera and counts reps with MediaPipe Pose. When you hit the target, it resets the timer.
 - Send `pineapple` by itself to turn the gate off, and `apple` to turn it back on with a fresh timer. Claude never sees either word.
 - Create a file named `disabled` in this folder to pause the gate. Press `q` in the camera window to quit without unlocking.

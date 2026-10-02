@@ -137,7 +137,7 @@ def main():
                     break
     finally:
         if choice:
-            coach.log_break(choice["exercise"], choice["reps"], done)
+            coach.log_break(choice, done)
         cap.release()
         cv2.destroyAllWindows()
         try:
