@@ -1,10 +1,12 @@
-"""Claude Code UserPromptSubmit hook: block prompts after LIMIT_SECONDS until
-the exercise the coach picks is done on camera.
+"""Claude Code UserPromptSubmit hook: the trigger for Desk Shrimp.
 
-Once time is up, the coach reads the blocked message: a good plea can buy extra
-seconds at the cost of extra reps. Everything else opens the camera.
-Create ~/jumpjack-gate/disabled to turn the gate off, or send the safe words:
-"pineapple" turns it off, "apple" turns it back on.
+This file is deterministic on purpose. It keeps the timer, handles the safe words,
+and when time is up it starts a coach session (counter.py) and blocks the prompt.
+Everything about the break itself (plea or exercise, which one, how many reps, when
+it is done) is decided by the coach in coach.py.
+
+Create a file named "disabled" in this folder to turn the gate off, or send the safe
+words: "pineapple" turns it off, "apple" turns it back on.
 """
 import json
 import os
@@ -12,13 +14,15 @@ import subprocess
 import sys
 import time
 
-import coach
-
 LIMIT_SECONDS = 60
+REPLY_WAIT_SECONDS = 15  # how long the hook waits for the coach's first line
 HOME = os.path.dirname(os.path.abspath(__file__))
-STATE = os.path.join(HOME, "state.json")
-PIDFILE = os.path.join(HOME, "counter.pid")
-DISABLED = os.path.join(HOME, "disabled")
+DATA = os.environ.get("DESK_SHRIMP_HOME", HOME)  # where state and logs live (tests override this)
+STATE = os.path.join(DATA, "state.json")
+PIDFILE = os.path.join(DATA, "counter.pid")
+DISABLED = os.path.join(DATA, "disabled")
+PENDING = os.path.join(DATA, "pending.json")
+REPLY = os.path.join(DATA, "reply.json")
 PYTHON = os.path.join(HOME, ".venv", "bin", "python")
 COUNTER = os.path.join(HOME, "counter.py")
 
@@ -32,17 +36,22 @@ def read_state():
         return None, False
 
 
-def write_state(ts):
+def write_state(ts, announced=True):
     with open(STATE, "w") as f:
-        json.dump({"window_start": ts, "announced": True}, f)
+        json.dump({"window_start": ts, "announced": announced}, f)
 
 
-def announce():
+def start_window(seconds, announced=True):
+    """Starts a work window that runs out in `seconds`, whatever LIMIT_SECONDS is."""
+    write_state(time.time() - LIMIT_SECONDS + seconds, announced)
+
+
+def announce(seconds):
     # JSON stdout with systemMessage is shown to the user in Claude Code.
-    print(json.dumps({"systemMessage": f"Desk Shrimp timer started: {LIMIT_SECONDS} seconds."}))
+    print(json.dumps({"systemMessage": f"Desk Shrimp timer started: {round(seconds)} seconds."}))
 
 
-def counter_running():
+def session_running():
     try:
         with open(PIDFILE) as f:
             os.kill(int(f.read().strip()), 0)
@@ -51,13 +60,37 @@ def counter_running():
         return False
 
 
-def launch_counter():
-    log = open(os.path.join(HOME, "counter.log"), "a")
-    subprocess.Popen(
+def launch_session(prompt):
+    """Starts the coach session in its own process and hands it the blocked message."""
+    with open(PENDING, "w") as f:
+        json.dump({"message": prompt[:500], "ts": time.time()}, f)
+    try:
+        os.remove(REPLY)
+    except OSError:
+        pass
+    log = open(os.path.join(DATA, "counter.log"), "a")
+    # The coach runs its own Claude session. DESK_SHRIMP_COACH stops this hook from gating it.
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    env["DESK_SHRIMP_COACH"] = "1"
+    proc = subprocess.Popen(
         [PYTHON, COUNTER],
         stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-        start_new_session=True,
+        start_new_session=True, env=env,
     )
+    with open(PIDFILE, "w") as f:
+        f.write(str(proc.pid))
+
+
+def wait_for_reply(timeout=REPLY_WAIT_SECONDS):
+    """Waits for the coach's first decision so it can be shown in the terminal."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with open(REPLY) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            time.sleep(0.2)
+    return None
 
 
 def handle_safe_word(prompt):
@@ -82,7 +115,20 @@ def block(reason):
     print(json.dumps({"decision": "block", "reason": reason}))
 
 
+def describe(reply):
+    """Turns the coach's first decision into the line shown in the terminal."""
+    if reply is None:
+        return ("Your coach is deciding. Watch for the camera window, finish the exercise, "
+                "then resend your message.")
+    if reply.get("kind") == "extension":
+        return (f"{reply['text']} You get {reply['seconds']} seconds; "
+                f"+{reply['extra_reps']} reps at your next break. Resend your message.")
+    return f"{reply['text']} Do it in the camera window, then resend your message."
+
+
 def main():
+    if os.environ.get("DESK_SHRIMP_COACH"):
+        return 0  # this is the coach's own Claude session, never gate it
     try:
         prompt = json.load(sys.stdin).get("prompt", "")
     except ValueError:
@@ -95,26 +141,18 @@ def main():
     start, announced = read_state()
     if start is None:
         write_state(now)
-        announce()
+        announce(LIMIT_SECONDS)
         return 0
     if now - start < LIMIT_SECONDS:
         if not announced:
             write_state(start)
-            announce()
+            announce(LIMIT_SECONDS - (now - start))
         return 0
-    if counter_running():
+    if session_running():
         block("Finish your reps in the camera window, then resend your message.")
         return 0
-    verdict = coach.negotiate(prompt)
-    if verdict["grant"]:
-        # Move the window start so exactly verdict["seconds"] remain.
-        write_state(now - LIMIT_SECONDS + verdict["seconds"])
-        block(f"{verdict['reply']} You get {verdict['seconds']} seconds; "
-              f"+{verdict['extra_reps']} reps at your next break. Resend your message.")
-        return 0
-    launch_counter()
-    block(f"{verdict['reply']} Your coach is picking an exercise in the camera window. "
-          "Finish it, then resend your message.")
+    launch_session(prompt)
+    block(describe(wait_for_reply()))
     return 0
 
 
