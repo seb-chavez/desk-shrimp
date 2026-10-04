@@ -69,7 +69,7 @@ Rep counting runs on your Mac with MediaPipe Pose. No video is uploaded. The coa
 
 Requires macOS, a webcam, [uv](https://docs.astral.sh/uv/), and the `claude` CLI.
 
-**Authentication.** The Agent SDK's documented method is an API key: set `ANTHROPIC_API_KEY` in the shell you start Claude Code from. Because the SDK runs the `claude` binary, it may also pick up an existing CLI login, but Anthropic's SDK docs say products built on the SDK should not offer claude.ai login without approval, so don't count on that path. Run `simulate.py` (below) to confirm the coach can reach Claude.
+The coach runs Claude Haiku through your installed `claude` CLI, so it uses your existing Claude login. No API key needed. Run `simulate.py` (below) to confirm the coach can reach Claude.
 
 ```sh
 uv venv --python 3.11 .venv
