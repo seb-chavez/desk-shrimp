@@ -215,6 +215,8 @@ class Fallback(unittest.TestCase):
 class Gate(unittest.TestCase):
     def setUp(self):
         fresh()
+        with open(gate.TIMER, "w") as f:
+            json.dump({"seconds": 60}, f)
 
     def run_gate(self, prompt):
         out = io.StringIO()
@@ -250,7 +252,9 @@ class Gate(unittest.TestCase):
         gate.write_state(time.time() - 61)
         self.assertEqual(self.run_gate("pineapple")["decision"], "block")
         self.assertIsNone(self.run_gate("work while off"))
-        self.assertEqual(self.run_gate(" Apple ")["decision"], "block")
+        self.assertIn("how long", self.run_gate(" Apple ")["reason"])
+        self.assertIn("how long", self.run_gate("work again")["reason"])
+        self.assertIn("20 minutes", self.run_gate("20 minutes")["reason"])
         self.assertIsNone(self.run_gate("work again"))
 
     def test_gate_ignores_the_coachs_own_claude_session(self):
@@ -258,6 +262,16 @@ class Gate(unittest.TestCase):
         with mock.patch.dict(os.environ, {"DESK_SHRIMP_COACH": "1"}):
             with mock.patch.object(gate, "launch_session", side_effect=AssertionError("launched")):
                 self.assertIsNone(self.run_gate("Time is up."))
+
+    def test_first_run_asks_for_the_timer(self):
+        os.remove(gate.TIMER)
+        self.assertIn("how long", self.run_gate("refactor the auth middleware")["reason"])
+        self.assertIn("how long", self.run_gate("forever")["reason"])
+        self.assertIn("45 minutes", self.run_gate("45 minutes")["reason"])
+        self.assertEqual(gate.read_limit(), 2700)
+        self.assertIsNone(self.run_gate("back to work"))  # timer is running, nothing to announce
+        self.assertEqual([gate.parse_duration(t) for t in ("1 hour", "90s", "2 Hrs", "1.5 min", "0 min", "ten minutes")],
+                         [3600, 90, 7200, 90, None, None])
 
     def test_shortened_timer_is_announced_with_the_real_number(self):
         gate.start_window(30, announced=False)
