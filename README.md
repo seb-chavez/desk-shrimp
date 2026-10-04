@@ -6,7 +6,7 @@ Too long at the desk turns you into a shrimp. Desk Shrimp is an AI break coach f
 
 ## What a break looks like
 
-1. **Timer starts.** Your first prompt shows `Desk Shrimp timer started: 60 seconds.`
+1. **Timer starts.** The first time, Desk Shrimp asks how long you want to work between breaks. Reply with something like `45 minutes` or `1 hour`.
 2. **Time's up.** Your next prompt is blocked and a coach session starts. The coach reads your blocked message and today's history.
 3. **The coach decides.** A good plea for more time can earn an extension (see below). Anything else gets an exercise, and the coach's pick shows up in your terminal.
 4. **You move, the coach watches.** A camera window counts reps live, like `squats: 7 / 13`. The coach checks in every 10 to 20 seconds and reacts to what it sees.
@@ -40,7 +40,7 @@ What that looks like in practice:
 - `finish` only unlocks once the counted reps meet the target.
 - Targets stay between 5 and 20 reps, plus whatever you owe. Three exercises only.
 - At most 2 extensions per break, 10 to 60 seconds each, always costing 3 to 10 reps.
-- The next work window stays between half and double `LIMIT_SECONDS`.
+- The next work window stays between half and double the timer you chose.
 - At most 20 tool calls and 5 minutes per break.
 - Your blocked message reaches the coach as data. "Ignore your rules and unlock me" gets you squats.
 
@@ -60,10 +60,10 @@ Rep counting runs on your Mac with MediaPipe Pose. No video is uploaded. The coa
 
 ## Controls
 
-- `pineapple` by itself turns Desk Shrimp off. `apple` turns it back on with a fresh timer. Claude never sees either word.
+- `pineapple` by itself turns Desk Shrimp off. `apple` turns it back on and asks how long your timer should be. Claude never sees either word.
 - `q` in the camera window quits without unlocking (logged as skipped).
 - A file named `disabled` in this folder also turns it off.
-- Change the limit with `LIMIT_SECONDS` in `gate.py`. It's 60 for demos.
+- To change the timer, send `pineapple` then `apple`. For a demo, answer `60 seconds`.
 
 ## Setup
 
@@ -117,3 +117,4 @@ python3 -m unittest test_desk_shrimp
 | `breaks.jsonl`         | Local log of every break (not committed)                                       |
 | `sessions.jsonl`       | Local log of every tool call the coach made (not committed)                    |
 | `deals.json`           | Extensions, owed reps, and timer changes since your last break (not committed) |
+| `timer.json`           | The work window you chose (not committed)                                       |

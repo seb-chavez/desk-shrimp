@@ -10,14 +10,15 @@ words: "pineapple" turns it off, "apple" turns it back on.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 
-LIMIT_SECONDS = 60
 REPLY_WAIT_SECONDS = 15  # how long the hook waits for the coach's first line
 HOME = os.path.dirname(os.path.abspath(__file__))
 DATA = os.environ.get("DESK_SHRIMP_HOME", HOME)  # where state and logs live (tests override this)
+TIMER = os.path.join(DATA, "timer.json")  # the user's chosen work window; delete it to choose again
 STATE = os.path.join(DATA, "state.json")
 PIDFILE = os.path.join(DATA, "counter.pid")
 DISABLED = os.path.join(DATA, "disabled")
@@ -25,6 +26,34 @@ PENDING = os.path.join(DATA, "pending.json")
 REPLY = os.path.join(DATA, "reply.json")
 PYTHON = os.path.join(HOME, ".venv", "bin", "python")
 COUNTER = os.path.join(HOME, "counter.py")
+UNITS = {"s": 1, "sec": 1, "second": 1, "m": 60, "min": 60, "minute": 60, "h": 3600, "hr": 3600, "hour": 3600}
+ASK = ('Desk Shrimp: how long should you work between breaks? Reply with a number and a unit, '
+       'like "45 minutes" or "1 hour". ("pineapple" turns Desk Shrimp off.)')
+
+
+def read_limit():
+    try:
+        with open(TIMER) as f:
+            return json.load(f)["seconds"]
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+LIMIT_SECONDS = read_limit() or 60
+
+
+def parse_duration(text):
+    """'45 minutes' -> 2700. None if it isn't a number and a known unit."""
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([a-z]+?)s?\s*", text.lower())
+    if not m or m.group(2) not in UNITS:
+        return None
+    seconds = round(float(m.group(1)) * UNITS[m.group(2)])
+    return seconds or None
+
+
+def human(seconds):
+    seconds = round(seconds)
+    return f"{seconds} seconds" if seconds < 120 else f"{round(seconds / 60)} minutes"
 
 
 def read_state():
@@ -48,7 +77,7 @@ def start_window(seconds, announced=True):
 
 def announce(seconds):
     # JSON stdout with systemMessage is shown to the user in Claude Code.
-    print(json.dumps({"systemMessage": f"Desk Shrimp timer started: {round(seconds)} seconds."}))
+    print(json.dumps({"systemMessage": f"Desk Shrimp timer started: {human(seconds)}."}))
 
 
 def session_running():
@@ -100,10 +129,10 @@ def handle_safe_word(prompt):
         open(DISABLED, "w").close()
         message = "Desk Shrimp off. Send \"apple\" to turn it back on."
     elif word == "apple":
-        if os.path.exists(DISABLED):
-            os.remove(DISABLED)
-        write_state(time.time())
-        message = f"Desk Shrimp on. Timer started: {LIMIT_SECONDS} seconds."
+        for path in (DISABLED, TIMER):  # back on means choosing the timer again
+            if os.path.exists(path):
+                os.remove(path)
+        message = "Desk Shrimp on. " + ASK.removeprefix("Desk Shrimp: ")
     else:
         return False
     block(message)
@@ -126,6 +155,18 @@ def describe(reply):
     return f"{reply['text']} Do it in the camera window, then resend your message."
 
 
+def setup_timer(prompt):
+    """First run: ask for the work window, and save it once the answer parses."""
+    seconds = parse_duration(prompt)
+    if seconds is None:
+        block(ASK)
+        return
+    with open(TIMER, "w") as f:
+        json.dump({"seconds": seconds}, f)
+    write_state(time.time())
+    block(f"Desk Shrimp timer set: {human(seconds)} between breaks. Back to work.")
+
+
 def main():
     if os.environ.get("DESK_SHRIMP_COACH"):
         return 0  # this is the coach's own Claude session, never gate it
@@ -136,6 +177,9 @@ def main():
     if handle_safe_word(prompt):
         return 0
     if os.path.exists(DISABLED):
+        return 0
+    if read_limit() is None:
+        setup_timer(prompt)
         return 0
     now = time.time()
     start, announced = read_state()
