@@ -1,7 +1,12 @@
-"""Opens the webcam, asks the coach for an exercise, and counts reps with MediaPipe Pose.
+"""Runs one break: the camera window on the main thread, the coach on a worker thread.
+
+The coach (coach.py) decides what happens. This file is its eyes and its screen: it counts
+reps with MediaPipe Pose, reports what it sees into the shared Session, and draws whatever
+the coach has chosen. It does not decide when the break is done unless the coach has failed
+and the fallback has taken over.
 
 Each exercise maps a pose to 'up', 'down', or None. One rep is a move from down to up.
-At the target, resets the gate timer and closes. Press q to quit without unlocking.
+Press q to quit without unlocking.
 """
 import json
 import os
@@ -12,13 +17,15 @@ import cv2
 import mediapipe as mp
 
 import coach
+import gate
 
-HOME = os.path.dirname(os.path.abspath(__file__))
-STATE = os.path.join(HOME, "state.json")
-PIDFILE = os.path.join(HOME, "counter.pid")
 WINDOW = "Desk Shrimp"
+FINISH_GRACE = 20  # seconds to wait for the coach to unlock after the target is met
+QUIT_GRACE = 10    # seconds to wait for the coach to log a skip after q
 
 P = mp.solutions.pose.PoseLandmark
+UPPER = (P.NOSE, P.LEFT_SHOULDER, P.RIGHT_SHOULDER, P.LEFT_WRIST, P.RIGHT_WRIST)
+LOWER = (P.LEFT_SHOULDER, P.RIGHT_SHOULDER, P.LEFT_HIP, P.RIGHT_HIP, P.LEFT_KNEE, P.RIGHT_KNEE)
 
 
 def visible(lm, *names):
@@ -27,7 +34,7 @@ def visible(lm, *names):
 
 
 def jumping_jacks(lm):
-    pts = visible(lm, P.NOSE, P.LEFT_SHOULDER, P.RIGHT_SHOULDER, P.LEFT_WRIST, P.RIGHT_WRIST)
+    pts = visible(lm, *UPPER)
     if not pts:
         return None
     nose, ls, rs, lw, rw = pts
@@ -41,7 +48,7 @@ def jumping_jacks(lm):
 
 def legs(lm):
     """Returns (shoulder_y, hip_y, left_knee_y, right_knee_y, torso) or None."""
-    pts = visible(lm, P.LEFT_SHOULDER, P.RIGHT_SHOULDER, P.LEFT_HIP, P.RIGHT_HIP, P.LEFT_KNEE, P.RIGHT_KNEE)
+    pts = visible(lm, *LOWER)
     if not pts:
         return None
     ls, rs, lh, rh, lk, rk = pts
@@ -77,30 +84,28 @@ def high_knees(lm):
     return None
 
 
+# name -> (pose detector, landmarks that must be in frame, tip)
 EXERCISES = {
-    "jumping jacks": (jumping_jacks, "Arms all the way up, then back down."),
-    "squats": (squats, "Step back so your knees are in frame. Sit low, then stand."),
-    "high knees": (high_knees, "Step back so your knees are in frame. Knee up to hip height."),
+    "jumping jacks": (jumping_jacks, UPPER, "Arms all the way up, then back down."),
+    "squats": (squats, LOWER, "Step back so your knees are in frame. Sit low, then stand."),
+    "high knees": (high_knees, LOWER, "Step back so your knees are in frame. Knee up to hip height."),
 }
 
 
-def draw(frame, text, sub, color):
+def draw(frame, text, line, tip, color):
     h, w = frame.shape[:2]
-    cv2.rectangle(frame, (0, 0), (w, 110), (0, 0, 0), -1)
+    cv2.rectangle(frame, (0, 0), (w, 135), (0, 0, 0), -1)
     cv2.putText(frame, text, (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.6, color, 4)
-    cv2.putText(frame, sub, (20, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (220, 220, 220), 2)
+    cv2.putText(frame, line, (20, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (220, 220, 220), 2)
+    cv2.putText(frame, tip, (20, 123), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (160, 160, 160), 1)
 
 
-def main():
-    with open(PIDFILE, "w") as f:
-        f.write(str(os.getpid()))
-    choice = {}
-    threading.Thread(target=lambda: choice.update(coach.pick_exercise()), daemon=True).start()
-
+def camera_loop(session):
+    """Shows the camera until the break ends. Returns when the window should close."""
     cap = cv2.VideoCapture(0)
     cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
     cv2.setWindowProperty(WINDOW, cv2.WND_PROP_TOPMOST, 1)
-    reps, last, done = 0, None, False
+    last, current, met_at = None, None, None
     try:
         with mp.solutions.pose.Pose(model_complexity=0) as pose:
             while cap.isOpened():
@@ -108,40 +113,76 @@ def main():
                 if not ok:
                     break
                 frame = cv2.flip(frame, 1)
-                if not choice:
-                    draw(frame, "Coach is picking...", "Get ready to move.", (0, 220, 255))
-                else:
-                    name, target = choice["exercise"], choice["reps"]
-                    detect, tip = EXERCISES[name]
-                    result = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                    if result.pose_landmarks:
-                        mp.solutions.drawing_utils.draw_landmarks(
-                            frame, result.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS)
-                        pos = detect(result.pose_landmarks.landmark)
-                        if pos == "up" and last == "down":
-                            reps += 1
-                        if pos:
-                            last = pos
-                    sub = choice["message"] if reps == 0 else tip
-                    draw(frame, f"{name}: {reps} / {target}", f"{sub} q to quit.", (0, 220, 255))
-                    if reps >= target:
-                        done = True
-                        draw(frame, "Unlocked!", "Go back to Claude Code and resend your message.", (0, 255, 0))
-                        cv2.imshow(WINDOW, frame)
-                        cv2.waitKey(2000)
-                        with open(STATE, "w") as f:
-                            json.dump({"window_start": time.time(), "announced": False}, f)
-                        break
+                view = session.view()
+                if view["outcome"] == "unlocked":
+                    draw(frame, "Unlocked!", "Go back to Claude Code and resend your message.", "", (0, 255, 0))
+                    cv2.imshow(WINDOW, frame)
+                    cv2.waitKey(2000)
+                    break
+                if view["outcome"] is not None:
+                    break
+                name, target = view["exercise"], view["target"]
+                detect, required, tip = EXERCISES[name]
+                if name != current:  # the coach switched exercise: start the rep cycle fresh
+                    current, last = name, None
+                framed, rep = False, False
+                result = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                if result.pose_landmarks:
+                    mp.solutions.drawing_utils.draw_landmarks(
+                        frame, result.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS)
+                    lm = result.pose_landmarks.landmark
+                    framed = visible(lm, *required) is not None
+                    pos = detect(lm)
+                    rep = pos == "up" and last == "down"
+                    if pos:
+                        last = pos
+                session.observe(framed, rep)
+                view = session.view()
+                draw(frame, f"{name}: {view['reps']} / {target}", view["line"], f"{tip} q to quit.", (0, 220, 255))
                 cv2.imshow(WINDOW, frame)
+                if view["reps"] >= target:
+                    met_at = met_at or time.time()
+                    if view["fallback"]:
+                        session.end("unlocked", "fallback")
+                    elif time.time() - met_at > FINISH_GRACE:
+                        session.engage_fallback("coach did not finish after the target was met")
+                else:
+                    met_at = None  # the coach raised the target
                 if cv2.waitKey(1) & 0xFF == ord("q"):
+                    session.quit()
                     break
     finally:
-        if choice:
-            coach.log_break(choice, done)
         cap.release()
         cv2.destroyAllWindows()
+
+
+def main():
+    with open(gate.PIDFILE, "w") as f:
+        f.write(str(os.getpid()))
+    try:
         try:
-            os.remove(PIDFILE)
+            with open(gate.PENDING) as f:
+                message = json.load(f).get("message", "")
+        except (OSError, ValueError):
+            message = ""
+        session = coach.Session(message)
+        worker = threading.Thread(target=coach.run_coach, args=(session,), daemon=True)
+        worker.start()
+        # Wait for the coach to pick an exercise or grant an extension. No camera for a granted plea.
+        if not session.decided.wait(coach.SESSION_SECONDS + 10):
+            session.engage_fallback("coach never decided")
+        if session.outcome is None:
+            camera_loop(session)
+        if session.outcome is None:
+            # They pressed q or the camera died. Give the coach a moment to log the skip itself.
+            deadline = time.time() + (0 if session.fallback else QUIT_GRACE)
+            while session.outcome is None and time.time() < deadline:
+                time.sleep(0.1)
+            session.end("skipped", "fallback")
+        worker.join(5)  # let the coach's last tool call reach sessions.jsonl
+    finally:
+        try:
+            os.remove(gate.PIDFILE)
         except OSError:
             pass
 

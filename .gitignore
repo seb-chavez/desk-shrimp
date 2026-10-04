@@ -6,3 +6,6 @@ counter.log
 disabled
 breaks.jsonl
 deals.json
+pending.json
+reply.json
+sessions.jsonl
